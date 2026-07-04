@@ -26,3 +26,17 @@ description: "..."
 slug: "my-post"
 ---
 ```
+
+## Secret scanning (pre-commit)
+
+A pre-commit hook blocks commits that look like they contain secrets (tokens,
+private IPs, `password:` lines, private keys) plus any exact strings you list in
+a gitignored `.secrets-denylist`.
+
+**Activate after cloning (once):**
+```
+./setup-hooks.sh
+```
+This sets `core.hooksPath=.githooks` and makes the hook executable.
+
+Bypass a false positive (rare, review first): `git commit --no-verify`.

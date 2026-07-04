@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Run once after cloning to activate the secret-scanning pre-commit hook.
+# Run ONCE after cloning to activate the secret-scanning pre-commit hook.
+set -e
 git config core.hooksPath .githooks
-echo "✓ pre-commit secret scanner active (.githooks/pre-commit)"
-echo "  Optional: cp .secrets-denylist.example .secrets-denylist and add exact secrets."
+chmod +x .githooks/pre-commit
+echo "✓ pre-commit secret scanner active"
+[ -f .secrets-denylist ] || { cp .secrets-denylist.example .secrets-denylist 2>/dev/null && \
+  echo "✓ created .secrets-denylist (edit it: add your exact secret strings)"; }
+echo "  Test it:  echo 'ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' > /tmp/t && git add -A && git commit -m x"
