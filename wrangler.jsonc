@@ -1,0 +1,8 @@
+{
+  "name": "blog",
+  "compatibility_date": "2026-07-01",
+  // Hugo builds the static site into ./public; Workers serves it as static assets.
+  "assets": {
+    "directory": "./public"
+  }
+}
