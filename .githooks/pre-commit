@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Pre-commit secret scanner for the public blog repo.
+# Blocks a commit if staged content looks like it contains secrets.
+# Safe to commit: uses PATTERNS (shapes), never literal secret values.
+# Optional literal denylist: put exact strings in .secrets-denylist (gitignored).
+
+set -u
+RED=$'\033[31m'; YEL=$'\033[33m'; GRN=$'\033[32m'; RST=$'\033[0m'
+fail=0
+hits=""
+
+# Only scan staged, added/changed text (not deletions), excluding this hook + denylist.
+staged=$(git diff --cached --name-only --diff-filter=ACM | grep -vE '^\.githooks/|^\.secrets-denylist$' || true)
+[ -z "$staged" ] && exit 0
+
+report(){ fail=1; hits+="  ${RED}✗${RST} $1"$'\n'; }
+
+# --- Pattern checks (the shapes of common secrets) ---
+declare -A PATTERNS=(
+  ["GitHub token"]='ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}'
+  ["Telegram bot token"]='[0-9]{8,10}:[A-Za-z0-9_-]{35}'
+  ["Atlassian API token"]='ATATT3x[A-Za-z0-9_=-]{20,}'
+  ["AWS access key"]='AKIA[0-9A-Z]{16}'
+  ["Private key block"]='-----BEGIN[ A-Z]*PRIVATE KEY-----'
+  ["Cloudflare token"]='[A-Za-z0-9_-]{40}\.[A-Za-z0-9_-]{20,}'
+  ["Private IPv4"]='(^|[^0-9])(192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})'
+  ["password/psk assignment"]='(password|passwd|psk|secret|api[_-]?key|token)["'"'"' ]*[:=]["'"'"' ]*[^ "'"'"'{<]{6,}'
+  ["ESPHome/base64 32B key"]='[A-Za-z0-9+/]{43}='
+)
+
+for name in "${!PATTERNS[@]}"; do
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    m=$(git show ":$f" 2>/dev/null | grep -nEi -e "${PATTERNS[$name]}" | head -3)
+    [ -n "$m" ] && report "$name in $f:"$'\n'"$(echo "$m" | sed 's/^/       /')"
+  done <<< "$staged"
+done
+
+# --- Literal denylist (gitignored file with your exact known secrets) ---
+if [ -f .secrets-denylist ]; then
+  while IFS= read -r secret; do
+    [ -z "$secret" ] && continue
+    case "$secret" in \#*) continue;; esac
+    while IFS= read -r f; do
+      [ -z "$f" ] && continue
+      if git show ":$f" 2>/dev/null | grep -qF "$secret"; then
+        report "KNOWN SECRET (denylist) in $f"
+      fi
+    done <<< "$staged"
+  done < .secrets-denylist
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "${RED}✋ Commit blocked — possible secret(s) detected:${RST}"
+  echo "$hits"
+  echo "${YEL}If it's a false positive, review carefully, then bypass with:${RST}"
+  echo "     git commit --no-verify"
+  exit 1
+fi
+echo "${GRN}✓ secret scan clean${RST}"
+exit 0
