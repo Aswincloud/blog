@@ -1,0 +1,7 @@
+{{ define "main" }}
+<article class="post">
+  <h1>{{ .Title }}</h1>
+  {{ if not .Params.hidemeta }}<p class="meta">{{ .Date.Format "Jan 2, 2006" }} · {{ .ReadingTime }} min read</p>{{ end }}
+  <div class="content">{{ .Content }}</div>
+</article>
+{{ end }}

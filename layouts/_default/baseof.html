@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ if .IsHome }}{{ .Site.Title }}{{ else }}{{ .Title }} · {{ .Site.Title }}{{ end }}</title>
+<meta name="description" content="{{ with .Description }}{{ . }}{{ else }}{{ .Site.Params.description }}{{ end }}">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a href="/" class="logo">{{ .Site.Title }}</a>
+  <nav>{{ range .Site.Menus.main }}<a href="{{ .URL }}">{{ .Name }}</a>{{ end }}</nav>
+</header>
+<main>{{ block "main" . }}{{ end }}</main>
+<footer class="site-footer">
+  <p>© {{ now.Year }} {{ .Site.Params.author }} · self-hosted homelab · built with Hugo</p>
+</footer>
+</body>
+</html>

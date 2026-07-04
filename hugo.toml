@@ -1,0 +1,23 @@
+baseURL = "https://blog.aswincloud.com/"
+languageCode = "en-us"
+title = "Aswin's Homelab"
+
+[params]
+  description = "Self-hosted homelab, home automation & the debugging behind it"
+  author = "Aswin"
+
+[markup.highlight]
+  style = "github-dark"
+  noClasses = true
+
+[markup.goldmark.renderer]
+  unsafe = true
+
+[[menu.main]]
+  name = "Posts"
+  url = "/posts/"
+  weight = 1
+[[menu.main]]
+  name = "About"
+  url = "/about/"
+  weight = 2
