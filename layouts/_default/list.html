@@ -1,15 +1,19 @@
 {{ define "main" }}
-<section class="intro">
-  <h1>{{ .Site.Title }}</h1>
-  <p class="tagline">{{ .Site.Params.description }}</p>
-</section>
-<section class="post-list">
-{{ range where .Site.RegularPages "Type" "posts" }}
-  <article class="post-item">
-    <a href="{{ .RelPermalink }}"><h2>{{ .Title }}</h2></a>
-    <p class="meta">{{ .Date.Format "Jan 2, 2006" }} · {{ .ReadingTime }} min read</p>
-    <p>{{ .Description }}</p>
-  </article>
-{{ end }}
-</section>
+{{- $posts := .RegularPages -}}
+<div class="page">
+  <div class="section-label" style="margin-bottom: var(--space-l)">
+    <h2>{{ .Title }}</h2>
+    <span class="rule" aria-hidden="true"></span>
+    <span class="count">{{ len $posts }}</span>
+  </div>
+  {{- with .Content }}<div class="prose" style="margin-bottom: var(--space-l)">{{ . }}</div>{{ end -}}
+</div>
+
+<div class="post-list">
+  {{- range $posts -}}
+    {{ partial "post-card.html" . }}
+  {{- else -}}
+    <p style="color: var(--muted)">No posts yet.</p>
+  {{- end -}}
+</div>
 {{ end }}

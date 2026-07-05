@@ -1,0 +1,14 @@
+{{- $lang := .Type | default "text" -}}
+{{- $highlighted := highlight (trim .Inner "\n") $lang "" -}}
+<div class="codeblock" data-lang="{{ $lang }}">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots" aria-hidden="true"><span></span><span></span><span></span></span>
+    <span class="codeblock__lang">{{ $lang }}</span>
+    <button type="button" class="codeblock__copy" aria-label="Copy code to clipboard">
+      <svg class="copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      <svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      <span class="label">Copy</span>
+    </button>
+  </div>
+  {{ $highlighted }}
+</div>

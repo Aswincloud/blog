@@ -1,0 +1,21 @@
+{{ define "main" }}
+{{- $posts := where .Site.RegularPages "Type" "posts" -}}
+<section class="hero">
+  <span class="eyebrow"><span class="status-dot" aria-hidden="true"></span> homelab · online</span>
+  <h1>{{ .Site.Title }}</h1>
+  <p class="lede">{{ or .Site.Params.tagline .Site.Params.description }}</p>
+</section>
+
+<section class="post-list-section">
+  <div class="section-label">
+    <h2>Latest posts</h2>
+    <span class="rule" aria-hidden="true"></span>
+    <span class="count">{{ len $posts }}</span>
+  </div>
+  <div class="post-list">
+    {{- range $posts -}}
+      {{ partial "post-card.html" . }}
+    {{- end -}}
+  </div>
+</section>
+{{ end }}

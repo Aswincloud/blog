@@ -1,0 +1,16 @@
+<footer class="site-footer">
+  <div class="wrap site-footer__inner">
+    <div class="site-footer__meta">
+      <span>© {{ now.Year }} {{ .Site.Params.author }}</span>
+      <span class="dot" aria-hidden="true">·</span>
+      <span class="uptime"><span class="status-dot" aria-hidden="true"></span> self-hosted</span>
+      <span class="dot" aria-hidden="true">·</span>
+      <span>built with Hugo</span>
+    </div>
+    <div class="site-footer__links">
+      <a href="{{ "posts/" | relURL }}">Posts</a>
+      <a href="{{ "index.xml" | relURL }}">RSS</a>
+      {{- with .Site.Params.github }}<a href="{{ . }}" rel="noopener noreferrer" target="_blank">GitHub</a>{{ end -}}
+    </div>
+  </div>
+</footer>

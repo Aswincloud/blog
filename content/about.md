@@ -1,6 +1,7 @@
 ---
 title: "About"
 slug: "about"
+type: "page"
 hidemeta: true
 ---
 
