@@ -55,4 +55,4 @@ a gitignored `.secrets-denylist`.
 This sets `core.hooksPath=.githooks` and makes the hook executable.
 
 Bypass a false positive (rare, review first): `git commit --no-verify`.
-
+<!-- reusable auto-approve smoke: 2026-07-05T08:08:00Z -->
