@@ -76,6 +76,7 @@ The fix is to use a check that has to travel *all the way through* to the home o
 
 ```javascript
 async function checkHttp(url, timeoutSec = 8) {
+  const t0 = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutSec * 1000);
   try {
@@ -103,6 +104,7 @@ So the prober doesn't trust any single sample. Each cycle it samples the monitor
 // Sample across a ~5s window; only flip on a unanimous verdict.
 async function confirmedCheck(mon) {
   const prev = lastState.has(mon.id) ? lastState.get(mon.id) : true;
+  const gap = (CONFIRM_SECONDS * 1000) / (CONFIRM_SAMPLES - 1); // spacing between samples
   const first = await runCheck(mon, SAMPLE_TIMEOUT);
 
   for (let i = 1; i < CONFIRM_SAMPLES; i++) {
