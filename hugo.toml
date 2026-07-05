@@ -1,17 +1,33 @@
 baseURL = "https://blog.aswincloud.com/"
-languageCode = "en-us"
 title = "Aswin's Homelab"
+defaultContentLanguage = "en"
+
+# Home page shows posts; keep RSS/summaries tidy.
+summaryLength = 30
+
+[languages.en]
+  locale = "en-us"
+  weight = 1
 
 [params]
   description = "Self-hosted homelab, home automation & the debugging behind it"
   author = "Aswin"
+  tagline = "Self-hosted homelab, home automation, and the debugging behind it."
+  # Shown in the footer / about. Leave blank to hide.
+  github = "https://github.com/aswin"
 
 [markup.highlight]
   style = "github-dark"
   noClasses = true
+  tabWidth = 2
+  lineNumbersInTable = false
 
 [markup.goldmark.renderer]
   unsafe = true
+
+[markup.tableOfContents]
+  startLevel = 2
+  endLevel = 3
 
 [[menu.main]]
   name = "Posts"

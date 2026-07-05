@@ -1,0 +1,6 @@
+{{- $alt := .Text -}}
+<figure>
+  <img src="{{ .Destination | safeURL }}" alt="{{ $alt }}" loading="lazy" decoding="async"
+    {{- with .Title }} title="{{ . }}"{{ end }}>
+  {{- with .Title }}<figcaption>{{ . }}</figcaption>{{ end -}}
+</figure>

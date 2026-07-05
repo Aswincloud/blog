@@ -1,0 +1,14 @@
+{
+  "name": "Aswin's Homelab",
+  "short_name": "Homelab",
+  "description": "Self-hosted homelab, home automation & the debugging behind it",
+  "icons": [
+    { "src": "/favicon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "/favicon-512.png", "type": "image/png", "sizes": "512x512" },
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" }
+  ],
+  "theme_color": "#0b0f16",
+  "background_color": "#0b0f16",
+  "display": "standalone",
+  "start_url": "/"
+}

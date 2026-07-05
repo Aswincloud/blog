@@ -2,9 +2,24 @@
 
 Personal homelab / home-automation blog. Static site built with [Hugo](https://gohugo.io).
 
+Custom theme (no external Hugo theme): a Swiss-modernist editorial layout —
+Inter + JetBrains Mono, a slate palette with a terminal-green accent, light/dark
+modes (follows the OS, remembers your choice), terminal-framed code blocks with
+copy buttons, heading anchors, and a reading-progress bar. Layouts live in
+`layouts/`; styles/JS in `assets/` (bundled + fingerprinted via Hugo Pipes).
+
 ## Local preview
+Requires the **Hugo _extended_** binary. Match the deployed version — it's pinned
+in `.hugo-version` (currently `0.163.3`):
 ```
 hugo server -D
+```
+No Hugo installed? Grab the pinned extended build (Linux x86-64) without sudo:
+```
+VER=$(cat .hugo-version)
+mkdir -p ~/bin   # ensure it exists and is on your PATH
+curl -fsSL "https://github.com/gohugoio/hugo/releases/download/v${VER}/hugo_extended_${VER}_linux-amd64.tar.gz" \
+  | tar -xz -C ~/bin hugo
 ```
 
 ## Deploy

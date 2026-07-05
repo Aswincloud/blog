@@ -1,0 +1,11 @@
+{{ define "main" }}
+<section class="error-page">
+  <div class="code">404</div>
+  <h1>This node is offline</h1>
+  <p>The page you're looking for isn't in the rack. It may have been moved, renamed, or never provisioned.</p>
+  <a class="btn btn--primary" href="{{ "/" | relURL }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+    Back home
+  </a>
+</section>
+{{ end }}

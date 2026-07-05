@@ -1,0 +1,16 @@
+{{- /* Prefer the explicit description; fall back to the auto summary as plain
+       text (Hugo summaries are HTML, often wrapped in <p>, which would nest
+       invalidly inside <p class="card__desc">). */ -}}
+{{- $desc := cond (ne .Description "") .Description (.Summary | plainify | strings.TrimSpace) -}}
+<a class="card" href="{{ .RelPermalink }}">
+  <div class="card__meta">
+    <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "Jan 2, 2006" }}</time>
+    <span class="dot" aria-hidden="true">·</span>
+    <span>{{ .ReadingTime }} min read</span>
+  </div>
+  <h3 class="card__title">{{ .Title }}</h3>
+  <p class="card__desc">{{ $desc }}</p>
+  <span class="card__more">Read
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+  </span>
+</a>
