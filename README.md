@@ -40,3 +40,5 @@ a gitignored `.secrets-denylist`.
 This sets `core.hooksPath=.githooks` and makes the hook executable.
 
 Bypass a false positive (rare, review first): `git commit --no-verify`.
+
+<!-- merge-queue smoke test 2026-07-05 — throwaway, safe to revert -->
