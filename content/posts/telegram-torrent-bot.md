@@ -60,7 +60,7 @@ The rest of Part 1 is unremarkable on purpose — every qBittorrent call goes th
 
 Here's the part I actually enjoy. When a download finishes, a completion hook on the home server sorts it into the media library and drops a `token → path` line into a small queue file. It also pings me on Telegram with a **Rename** button — because "torrent finished as `Some.Movie.2024.1080p.WEBRip.x265`" is not what I want Jellyfin to show.
 
-Tap the button, and the bot replies with a [ForceReply](https://core.telegram.org/bots/api#forcereply) prompt showing the current filename. I type `Some Movie (2024)`, and the bot renames the file on the server, extension preserved, and Jellyfin rescans.
+Tap the button, and the bot replies with a [ForceReply](https://core.telegram.org/bots/api#forcereply) prompt showing the current filename. I type `Some Movie (2024)`, and the bot renames the file on the server — keeping the original extension if I didn't type one — and Jellyfin rescans.
 
 The thing is: this is a chat message causing a `mv` to run on my home server. That sentence should make you nervous, and the whole design is about earning it back.
 
@@ -90,15 +90,16 @@ I did this deliberately, and it's the same lesson as a [previous automation of m
 
 ### It assumes the input is hostile
 
-The token gets looked up by `awk`-ing the queue file over SSH, which means it's about to become part of a shell command. So before it goes anywhere near a shell, it's stripped to alphanumeric — nothing else survives:
+The token gets looked up by `awk`-ing the queue file over SSH, which means it's about to become part of a shell command. So before it goes anywhere near a shell, everything that isn't alphanumeric is dropped — which strips every shell metacharacter (quotes, spaces, `;`, `$`, `` ` ``, `/`) an injection would need:
 
 ```python
 def _lookup_path(token):
-    safe = "".join(c for c in token if c.isalnum())  # nothing but [A-Za-z0-9]
+    # .isalnum() keeps only letters/digits, so no shell metacharacters survive.
+    safe = "".join(c for c in token if c.isalnum())
     if not safe:
         return None
     rc, out, _ = _ssh_run(
-        f"awk -F'\\t' '$1==\"{safe}\"{{print $2; exit}}' {RENAME_QUEUE} 2>/dev/null"
+        f"awk -F'\\t' '$1==\"{safe}\"{{print $2; exit}}' '{RENAME_QUEUE}' 2>/dev/null"
     )
     return out.strip() or None
 ```
