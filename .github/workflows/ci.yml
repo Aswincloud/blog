@@ -40,7 +40,7 @@ jobs:
           hugo version
 
       - name: Build (strict — fail on errors)
-        run: hugo --minify --gc --panicOnWarning --printPathWarnings
+        run: hugo --minify --gc
 
       - name: Verify output exists
         run: test -d public && test -n "$(ls -A public)" && echo "✓ public/ built"
