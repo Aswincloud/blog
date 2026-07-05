@@ -51,14 +51,15 @@ Two things about scraping this page taught me something.
 
 My first not-found check was the obvious one: look for the "no information on this Waybill" message. It never fired. Every lookup, valid or garbage, looked successful.
 
-The reason is a pattern I've now hit in two different projects: **the endpoint returns `200` unconditionally.** The "no records" copy lives in a hidden `<div>` that's present on *every* page, shown or hidden by the front-end. Grepping for it matched always. What actually signals a real result is a specific result panel keyed to the waybill:
+The reason is a pattern I've now hit in two different projects: **the endpoint returns `200` unconditionally.** The "no information on this Waybill" copy lives in a hidden `<div>` that's present in the markup of *every* response, shown or hidden by the front-end — so searching for that text matched every time, valid waybill or not. The trick is to stop looking for the error and look for *success*: a result panel whose `id` is keyed to the waybill itself, which only exists when there's a real shipment:
 
 ```typescript
-// Existence is signalled by an `id="{awb}-rdrmv"` result panel, NOT by the
-// absence of the "no information" copy (which is hidden on every page).
+// Existence is signalled by a result panel keyed to the waybill
+// (id="{awb}-rdrmv") — a POSITIVE signal, not the absence of the
+// "no information" copy (which is in the markup of every response).
 const panelRe = new RegExp(`id="${cleaned}-rdrmv"[\\s\\S]*?(?=<!--\\s*AWB${cleaned}\\s*-->|$)`, "i");
-const panelMatch = html.match(panelRe);
-if (!panelMatch || /Records Not Found/i.test(html)) {
+const panel = html.match(panelRe);
+if (!panel) {
   throw new CarrierError("Tracking number not found", "not_found", 404);
 }
 ```
@@ -70,9 +71,12 @@ It's a lesson I keep relearning across projects: **a `200`, or the presence of a
 Scraping HTML is a promise that someone else's redesign will eventually break you. You can't prevent that, but you can decide *how* it breaks. Rather than brittle positional selectors ("the third `<td>` in the fifth table"), the parser matches on **label text** — find the `<th>` that says "Status," take the `<td>` next to it:
 
 ```typescript
+// Escape regex metacharacters in the label (NOT the deprecated global escape()).
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // Pull the value cell next to a <th> whose text matches the given label.
 function fieldByLabel(html: string, label: string): string | undefined {
-  const re = new RegExp(`<th[^>]*>\\s*${escape(label)}\\s*</th>\\s*<td[^>]*>([\\s\\S]*?)</td>`, "i");
+  const re = new RegExp(`<th[^>]*>\\s*${escapeRegex(label)}\\s*</th>\\s*<td[^>]*>([\\s\\S]*?)</td>`, "i");
   const m = html.match(re);
   return m ? stripTags(m[1]) || undefined : undefined;
 }
