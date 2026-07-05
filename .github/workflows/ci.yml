@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 🏗️ Hugo Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Hugo .GitInfo / .Lastmod need full history
+
+      - name: Read pinned Hugo version
+        id: hugo
+        run: echo "version=$(cat .hugo-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Hugo (extended)
+        env:
+          HUGO_VERSION: ${{ steps.hugo.outputs.version }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb"
+          curl -sSL "$url" -o /tmp/hugo.deb
+          sudo dpkg -i /tmp/hugo.deb
+          hugo version
+
+      - name: Build (strict — fail on errors)
+        run: hugo --minify --gc --panicOnWarning --printPathWarnings
+
+      - name: Verify output exists
+        run: test -d public && test -n "$(ls -A public)" && echo "✓ public/ built"
