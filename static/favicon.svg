@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Aswin's Homelab">
+  <rect width="512" height="512" rx="112" fill="#0d1117"/>
+  <!-- server rack units -->
+  <rect x="84" y="100" width="344" height="128" rx="40" fill="#33d17d"/>
+  <rect x="84" y="284" width="344" height="128" rx="40" fill="#33d17d"/>
+  <!-- status LEDs (cutouts) -->
+  <circle cx="146" cy="164" r="22" fill="#0d1117"/>
+  <circle cx="146" cy="348" r="22" fill="#0d1117"/>
+</svg>
