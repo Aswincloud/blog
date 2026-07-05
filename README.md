@@ -17,6 +17,7 @@ hugo server -D
 No Hugo installed? Grab the pinned extended build (Linux x86-64) without sudo:
 ```
 VER=$(cat .hugo-version)
+mkdir -p ~/bin   # ensure it exists and is on your PATH
 curl -fsSL "https://github.com/gohugoio/hugo/releases/download/v${VER}/hugo_extended_${VER}_linux-amd64.tar.gz" \
   | tar -xz -C ~/bin hugo
 ```

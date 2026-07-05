@@ -1,4 +1,7 @@
-{{- $desc := cond (ne .Description "") .Description .Summary -}}
+{{- /* Prefer the explicit description; fall back to the auto summary as plain
+       text (Hugo summaries are HTML, often wrapped in <p>, which would nest
+       invalidly inside <p class="card__desc">). */ -}}
+{{- $desc := cond (ne .Description "") .Description (.Summary | plainify | strings.TrimSpace) -}}
 <a class="card" href="{{ .RelPermalink }}">
   <div class="card__meta">
     <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "Jan 2, 2006" }}</time>

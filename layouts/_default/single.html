@@ -24,20 +24,22 @@
 </article>
 
 {{- if not .Params.hidemeta -}}
-{{- $prev := .PrevInSection -}}
-{{- $next := .NextInSection -}}
-{{- if or $prev $next -}}
+{{- /* Hugo default sort is newest-first: .NextInSection is the newer post,
+       .PrevInSection is the older one. Name them by meaning to avoid confusion. */ -}}
+{{- $newer := .NextInSection -}}
+{{- $older := .PrevInSection -}}
+{{- if or $newer $older -}}
 <nav class="pager" aria-label="More posts">
-  {{- if $next -}}
-  <a class="pager__item" href="{{ $next.RelPermalink }}">
+  {{- if $newer -}}
+  <a class="pager__item" href="{{ $newer.RelPermalink }}">
     <span class="pager__dir">← Newer</span>
-    <span class="pager__title">{{ $next.Title }}</span>
+    <span class="pager__title">{{ $newer.Title }}</span>
   </a>
   {{- else -}}<span></span>{{- end -}}
-  {{- if $prev -}}
-  <a class="pager__item pager__item--next" href="{{ $prev.RelPermalink }}">
+  {{- if $older -}}
+  <a class="pager__item pager__item--next" href="{{ $older.RelPermalink }}">
     <span class="pager__dir">Older →</span>
-    <span class="pager__title">{{ $prev.Title }}</span>
+    <span class="pager__title">{{ $older.Title }}</span>
   </a>
   {{- else -}}<span></span>{{- end -}}
 </nav>

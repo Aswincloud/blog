@@ -54,9 +54,12 @@
   document.querySelectorAll(".codeblock__copy").forEach(function (btn) {
     btn.addEventListener("click", function () {
       var block = btn.closest(".codeblock");
-      var code = block && block.querySelector("pre");
-      if (!code) return;
-      var text = code.innerText.replace(/\n$/, "");
+      if (!block) return;
+      // Read the raw source from <code> (textContent is faithful and doesn't
+      // trigger layout); fall back to <pre> if the structure differs.
+      var src = block.querySelector("pre code") || block.querySelector("pre");
+      if (!src) return;
+      var text = src.textContent.replace(/\n$/, "");
 
       var done = function () {
         btn.classList.add("is-copied");
@@ -87,11 +90,16 @@
     ta.style.left = "-9999px";
     document.body.appendChild(ta);
     ta.select();
+    var ok = false;
     try {
-      document.execCommand("copy");
-      done();
-    } catch (e) {}
+      // execCommand can return false without throwing — only signal success
+      // when the copy is actually confirmed.
+      ok = document.execCommand("copy");
+    } catch (e) {
+      ok = false;
+    }
     document.body.removeChild(ta);
+    if (ok) done();
   }
 
   /* ---- Reading progress -------------------------------------------------- */
