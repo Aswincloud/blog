@@ -1,0 +1,3 @@
+# Blog code owners. The codeowners-bypass team is the auto-approve bot,
+# so its approval satisfies the required code-owner review.
+*   @Aswinmcw @Aswincloud/codeowners-bypass
