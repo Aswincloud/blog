@@ -5,3 +5,7 @@
 
 # secret scanner: never commit the literal denylist
 .secrets-denylist
+
+test-results/
+playwright-report/
+node_modules/
