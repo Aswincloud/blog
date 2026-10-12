@@ -14,7 +14,7 @@ export default defineConfig({
   use: { baseURL: 'http://127.0.0.1:4173', trace: 'on-first-retry' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: 'npx serve@14 public -l 4173 -n',
+    command: 'python3 -m http.server 4173 --directory public',
     url: 'http://127.0.0.1:4173',
     reuseExistingServer: false,
     timeout: 60_000,

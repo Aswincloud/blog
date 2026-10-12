@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0   # Hugo .GitInfo / .Lastmod need full history
 
@@ -34,8 +34,13 @@ jobs:
           HUGO_VERSION: ${{ steps.hugo.outputs.version }}
         run: |
           set -euo pipefail
+          [[ "$HUGO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           url="https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb"
+          checksum_url="https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_${HUGO_VERSION}_checksums.txt"
+          curl -sSL "$checksum_url" -o /tmp/hugo-checksums.txt
           curl -sSL "$url" -o /tmp/hugo.deb
+          grep -F "  hugo_extended_${HUGO_VERSION}_linux-amd64.deb" /tmp/hugo-checksums.txt \
+            | (cd /tmp && sha256sum -c -)
           sudo dpkg -i /tmp/hugo.deb
           hugo version
 
@@ -50,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Read pinned Hugo version
@@ -61,12 +66,17 @@ jobs:
           HUGO_VERSION: ${{ steps.hugo.outputs.version }}
         run: |
           set -euo pipefail
+          [[ "$HUGO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          checksum_url="https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_${HUGO_VERSION}_checksums.txt"
+          curl -sSL "$checksum_url" -o /tmp/hugo-checksums.txt
           curl -sSL "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb" -o /tmp/hugo.deb
+          grep -F "  hugo_extended_${HUGO_VERSION}_linux-amd64.deb" /tmp/hugo-checksums.txt \
+            | (cd /tmp && sha256sum -c -)
           sudo dpkg -i /tmp/hugo.deb
       - name: Build site
         run: hugo --minify --gc
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
       - name: Install test deps
