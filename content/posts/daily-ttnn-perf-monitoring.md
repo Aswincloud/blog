@@ -37,6 +37,9 @@ Nothing on the tt-metal side belongs to the dashboard except one branch, `Aswinm
 This is the call the workflow makes. Every flag here earned its place:
 
 ```bash
+# Where the test scripts are fetched from at run time (public, no auth needed).
+RAW_BASE=https://raw.githubusercontent.com/Aswincloud/ttnn-performance-dashboard/main
+
 # $SHARD / $SHARD_TOTAL are single-quoted on purpose: they must NOT expand
 # on our runner. tt-metal's matrix sets them per cell at run time.
 CMD='set -euo pipefail
@@ -240,6 +243,94 @@ It runs on four kinds of credentials, each scoped to one job:
 - **`SLACK_BOT_TOKEN`**, which posts failures with a human-readable reason for each failure kind. As Failures 1 and 4 showed, getting that reason *right* is most of the value.
 
 Checkout runs with `persist-credentials: false`. Otherwise the read-only `GITHUB_TOKEN` is left in git config, overrides the App token on push, and the PR push fails with a 403.
+
+## Run it yourself
+
+Everything above is automated in my repo. You don't need my repo to use it, though. If you have **push access to `tenstorrent/tt-metal`**, you can start a sweep and get the numbers yourself. Push access is what `gh workflow run` needs there; the dashboard side is all public.
+
+**Just want last night's numbers?** You don't need to run anything. The pipeline publishes the newest result for each combo, readable without credentials:
+
+```
+https://raw.githubusercontent.com/Aswincloud/ttnn-performance-dashboard/main/data/latest/latest_<combo>.json
+```
+
+Here `<combo>` is one of `bf16_32x32`, `bf16_256x256`, `fp32_32x32`, `fp32_256x256` (all N150) or `p100a_bf16_32x32` (Blackhole). Run a sweep yourself only when you need to measure a specific tt-metal branch or commit, or need numbers newer than last night's.
+
+**What you need**
+
+- The [`gh` CLI](https://cli.github.com/), logged in (`gh auth login`) as an account that can push to `tenstorrent/tt-metal`. A token needs the `repo` and `workflow` scopes.
+- `python3`. The merge step uses only the standard library.
+- About 100 minutes, which is how long a full run takes.
+
+**The whole thing as one script.** Save it as `run-perf.sh` and run `bash run-perf.sh`. To measure a different tt-metal branch or commit instead of my branch's tip, run `TT_COMMIT=<branch-or-sha> bash run-perf.sh`.
+
+```bash
+#!/usr/bin/env bash
+# Trigger the TTNN eltwise perf sweep on tt-metal and turn it into CSVs.
+# Needs only: gh CLI authenticated with push access to tenstorrent/tt-metal, python3.
+set -euo pipefail
+
+TT_REPO=tenstorrent/tt-metal
+TT_BRANCH=Aswinmcw/test_eltwise_perf
+# The test scripts live in the dashboard repo and are fetched at run time.
+RAW_BASE=https://raw.githubusercontent.com/Aswincloud/ttnn-performance-dashboard/main
+# Optional: measure a different tt-metal branch or SHA. Empty = the branch tip.
+TT_COMMIT="${TT_COMMIT:-}"
+
+# --- 1. Note existing runs, so we can tell which one is ours afterwards. ---
+before=$(gh run list -R "$TT_REPO" -w test-dispatch.yaml -e workflow_dispatch \
+           -b "$TT_BRANCH" -L 100 --json databaseId -q '.[].databaseId' | sort -u)
+
+# --- 2. Dispatch. Single quotes keep $SHARD/$SHARD_TOTAL literal: tt-metal's
+#        matrix fills them in per cell. arch and runner-label are required by
+#        the form but ignored; the branch's matrix picks the real hardware. ---
+CMD='set -euo pipefail
+uv pip install ttperf
+curl -fsSL '"$RAW_BASE"'/test_eltwise_operations.py -o /work/test_eltwise_operations.py
+curl -fsSL '"$RAW_BASE"'/perf_measurement_script.py -o /work/perf_measurement_script.py
+cd /work && python perf_measurement_script.py --shard "$SHARD/$SHARD_TOTAL"'
+
+gh workflow run test-dispatch.yaml -R "$TT_REPO" --ref "$TT_BRANCH" \
+  -f arch=wormhole_b0 \
+  -f 'runner-label=["tt-ubuntu-2204-N150-viommu-stable"]' \
+  -f tracy=true \
+  -f command="$CMD" \
+  ${TT_COMMIT:+-f commit="$TT_COMMIT"}
+
+# --- 3. Find the run we just started (the one ID that wasn't there before). ---
+RUN_ID=""
+for _ in $(seq 1 30); do
+  sleep 10
+  now=$(gh run list -R "$TT_REPO" -w test-dispatch.yaml -e workflow_dispatch \
+          -b "$TT_BRANCH" -L 100 --json databaseId -q '.[].databaseId' | sort -u)
+  new=$(comm -13 <(echo "$before") <(echo "$now") | grep -v '^$' || true)
+  [ "$(echo "$new" | grep -c .)" -eq 1 ] && { RUN_ID=$new; break; }
+done
+[ -n "$RUN_ID" ] || { echo "could not identify the new run" >&2; exit 1; }
+echo "run: https://github.com/$TT_REPO/actions/runs/$RUN_ID"
+
+# --- 4. Wait. A full run takes about 100 minutes. ---
+gh run watch "$RUN_ID" -R "$TT_REPO" --interval 120 --exit-status || {
+  echo "run did not succeed; re-run only the failed cells with:" >&2
+  echo "  gh run rerun $RUN_ID -R $TT_REPO --failed" >&2; exit 1; }
+
+# --- 5. Download the 25 shard artifacts and merge them into one CSV per combo. ---
+OUT="perf-$RUN_ID"; mkdir -p "$OUT/tools"
+gh run download "$RUN_ID" -R "$TT_REPO" -p 'eltwise-perf-results-*' -D "$OUT/artifacts"
+curl -fsSL "$RAW_BASE/perf_measurement_script.py" -o "$OUT/tools/perf_measurement_script.py"
+curl -fsSL "$RAW_BASE/combine_to_csv.py"          -o "$OUT/tools/combine_to_csv.py"
+PYTHONPATH="$OUT/tools" python3 "$OUT/tools/combine_to_csv.py" "$OUT/artifacts" "$OUT"
+```
+
+When it finishes you have one CSV per combo in `perf-<run-id>/`, for example `bf16_32x32.csv` and `p100a_bf16_32x32.csv`. Each row is one op, with `average_duration_ns`, `std_deviation_ns`, `min_duration_ns`, `max_duration_ns` and the number of successful runs out of 3. The merged JSON is next to each CSV. Its `metadata` block records `perf_dtype`, `perf_shape`, `perf_arch` and `git_commit_id`, so you can confirm the run measured what you asked for. `git_commit_id` is the tt-metal commit that was actually built. When you pass `TT_COMMIT`, check it there: the run page always shows the branch tip instead.
+
+**A few things that trip people up**
+
+- **Use the `gh` command above, not the GitHub web form.** The form's `command` box is a single line. A multi-line paste gets its newlines turned into spaces, so `set -euo pipefail` swallows every command after it and the test scripts never download. If you must use the form, join the commands with `; ` instead.
+- **Keep `"$SHARD/$SHARD_TOTAL"` literal.** It's filled in per cell by tt-metal's matrix. Don't replace it with numbers.
+- **The artifacts are raw shards.** There are 25 of them, named `eltwise-perf-results-<combo>-shard-<1..5>`. Each one only holds a fifth of the ops, so always merge before you read anything.
+- **One flaky cell fails the whole run.** If 24 cells passed, the script prints a `gh run rerun --failed` command. That re-runs only the failed cell and keeps the artifacts already produced. Run the download step again after it finishes.
+- **Artifacts expire after about 90 days.** After that the shards are gone, and only the merged results in the dashboard repo remain.
 
 ## Takeaway
 
