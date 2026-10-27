@@ -256,13 +256,19 @@ https://raw.githubusercontent.com/Aswincloud/ttnn-performance-dashboard/main/dat
 
 Here `<combo>` is one of `bf16_32x32`, `bf16_256x256`, `fp32_32x32`, `fp32_256x256` (all N150) or `p100a_bf16_32x32` (Blackhole). Run a sweep yourself only when you need to measure a specific tt-metal branch or commit, or need numbers newer than last night's.
 
+**Run on your own branch, never on mine.** The script copies my branch, `Aswinmcw/test_eltwise_perf`, to one named `<your-github-login>/eltwise-perf`, and runs there. Please don't dispatch on my branch or push to it, and never touch `main`. This isn't only etiquette. My nightly job force-pushes my branch, so anything you push there disappears overnight. And my recovery job treats the newest successful run on my branch as that day's data. A run of yours there, especially one measuring a custom commit, could be published on the dashboard as my nightly numbers. The script refuses to run on my branch or `main`, and it creates your branch server-side, so there's no multi-gigabyte clone and nothing is pushed to any existing branch.
+
 **What you need**
 
 - The [`gh` CLI](https://cli.github.com/), logged in (`gh auth login`) as an account that can push to `tenstorrent/tt-metal`. A token needs the `repo` and `workflow` scopes.
 - `python3`. The merge step uses only the standard library.
 - About 100 minutes, which is how long a full run takes.
 
-**The whole thing as one script.** Save it as `run-perf.sh` and run `bash run-perf.sh`. To measure a different tt-metal branch or commit instead of my branch's tip, run `TT_COMMIT=<branch-or-sha> bash run-perf.sh`.
+**The whole thing as one script.** Save it as `run-perf.sh` and run `bash run-perf.sh`. Some options:
+
+- `TT_COMMIT=<branch-or-sha> bash run-perf.sh` measures a different tt-metal branch or commit instead of the tip of your branch.
+- `REFRESH=1 bash run-perf.sh` resets your branch to my current one first. My branch is rebased onto upstream `main` every night, so this picks up the latest build tooling. It overwrites your branch, so skip it if you've committed your own changes there.
+- `TT_BRANCH=<name> bash run-perf.sh` uses a branch name of your choosing.
 
 ```bash
 #!/usr/bin/env bash
@@ -271,11 +277,34 @@ Here `<combo>` is one of `bf16_32x32`, `bf16_256x256`, `fp32_32x32`, `fp32_256x2
 set -euo pipefail
 
 TT_REPO=tenstorrent/tt-metal
-TT_BRANCH=Aswinmcw/test_eltwise_perf
+# My branch: copy it, never run on it or push to it. My nightly job
+# force-pushes it, and my recovery job ingests the newest successful run on
+# it as the day's data, so your run there could be published as mine.
+SOURCE_BRANCH=Aswinmcw/test_eltwise_perf
+# Your own branch, created from mine on first use.
+TT_BRANCH="${TT_BRANCH:-$(gh api user -q .login)/eltwise-perf}"
 # The test scripts live in the dashboard repo and are fetched at run time.
 RAW_BASE=https://raw.githubusercontent.com/Aswincloud/ttnn-performance-dashboard/main
 # Optional: measure a different tt-metal branch or SHA. Empty = the branch tip.
 TT_COMMIT="${TT_COMMIT:-}"
+
+# --- 0. Work on your own branch, never on mine or main. ---
+case "$TT_BRANCH" in
+  "$SOURCE_BRANCH"|main) echo "refusing to run on $TT_BRANCH; use your own branch" >&2; exit 1 ;;
+esac
+SRC_SHA=$(gh api "repos/$TT_REPO/git/ref/heads/$SOURCE_BRANCH" -q .object.sha)
+if ! gh api "repos/$TT_REPO/git/ref/heads/$TT_BRANCH" >/dev/null 2>&1; then
+  # Creates the branch server-side: no multi-GB clone, and nothing is
+  # pushed to any existing branch.
+  gh api "repos/$TT_REPO/git/refs" -f ref="refs/heads/$TT_BRANCH" -f sha="$SRC_SHA" >/dev/null
+  echo "created $TT_BRANCH from $SOURCE_BRANCH @ ${SRC_SHA:0:10}"
+elif [ "${REFRESH:-0}" = 1 ]; then
+  # Reset YOUR branch to my current tip (mine is rebased on upstream main nightly).
+  gh api -X PATCH "repos/$TT_REPO/git/refs/heads/$TT_BRANCH" -f sha="$SRC_SHA" -F force=true >/dev/null
+  echo "refreshed $TT_BRANCH to $SOURCE_BRANCH @ ${SRC_SHA:0:10}"
+else
+  echo "using existing $TT_BRANCH (REFRESH=1 resets it to $SOURCE_BRANCH)"
+fi
 
 # --- 1. Note existing runs, so we can tell which one is ours afterwards. ---
 before=$(gh run list -R "$TT_REPO" -w test-dispatch.yaml -e workflow_dispatch \
