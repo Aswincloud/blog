@@ -1,81 +1,195 @@
 ---
 title: "Benchmarking Tenstorrent hardware every night from a repo that owns none of it"
 date: 2026-10-27
-description: "A dashboard that times 258 TTNN eltwise ops on real Tenstorrent cards every night, driven entirely from GitHub Actions in a repo with no hardware and no write access to the one that has it. Building it took an afternoon. Keeping it honest took three months of failures that all lied about their cause — a merge conflict that wasn't one, a library a refactor quietly unhooked, and a recovery job that confidently ingested a run from three weeks ago."
+lastmod: 2026-11-23
+description: "A dashboard that times about 290 TTNN eltwise ops on real Tenstorrent cards every night. It runs from a public repo with no hardware, and since a security cleanup, no credential that can touch the repo that has the hardware. How four systems are wired together, why the credential split ended up the way it did, how a run went from 100 minutes to 20, and the failures that all lied about their cause."
 slug: "daily-ttnn-perf-monitoring"
 ---
 
-I maintain a dashboard — [ttnn-eltwise-performance.aswincloud.com](https://ttnn-eltwise-performance.aswincloud.com) — that answers one question every morning: **did any TTNN eltwise op on Tenstorrent hardware get slower last night?** TTNN is the op library on top of [tt-metal](https://github.com/tenstorrent/tt-metal). "Eltwise" means `add`, `exp`, `relu`, `sigmoid` and about 250 friends. Each one gets its device-kernel time measured on a real card, every day, and charted.
+Every morning, [ttnn-eltwise-performance.aswincloud.com](https://ttnn-eltwise-performance.aswincloud.com) answers one question: **did any TTNN eltwise op on Tenstorrent hardware get slower last night?** TTNN is the op library on top of [tt-metal](https://github.com/tenstorrent/tt-metal). "Eltwise" means `add`, `exp`, `relu`, `div`, `gelu_bw` and about 290 others. Each one has its device-kernel time measured on a real card, on two boards, two dtypes and two shapes, and the results are charted.
 
-The awkward part is where the pieces live. The hardware runners belong to `tenstorrent/tt-metal`. My [dashboard repo](https://github.com/Aswincloud/ttnn-performance-dashboard) has no hardware and cannot write to tt-metal. So the whole pipeline is one repo reaching into another: dispatch a job over there, wait for it, collect what it left behind, and land it over here as a pull request.
+The awkward part is where the pieces live:
 
-This post covers how that works, with the real commands. It also covers the parts I actually learned something from, which are all failures. Every one of them, at first, told me the wrong thing about its own cause.
+- **The hardware runners** belong to `tenstorrent/tt-metal`.
+- **My [dashboard repo](https://github.com/Aswincloud/ttnn-performance-dashboard)** is public, has no hardware, and since November holds no credential that can write to tt-metal.
+- **The site and the email alerts** run on Cloudflare.
+- **The one thing allowed to start a run** is a cron job on a machine under my desk.
 
-## The shape of the thing
+This post covers how those four pieces are wired together, with the real commands. It also covers the parts I actually learned something from, which are all failures. Nearly every one of them initially pointed me at the wrong cause.
 
-One GitHub Actions workflow, two crons:
+## The problem
 
-```yaml
-on:
-  schedule:
-    - cron: "30 19 * * *"   # 01:00 IST — the main run
-    - cron: "30 23 * * *"   # 05:00 IST — the safety-net (more on this later)
-```
+Performance regressions in an op library are quiet. A kernel change makes `tanh_bw` 2× slower, every test still passes, and nobody notices until a model is slower and someone bisects for a week. What you want is a boring time series: every op, every night, on real silicon, with the commit next to each number.
 
-The main run does five things in order:
+There were three obstacles:
 
-1. **Rebase** my tt-metal branch onto upstream `main`, so the build tooling stays current.
-2. **Dispatch** tt-metal's own `test-dispatch.yaml` workflow on that branch.
-3. **Poll** that run until it finishes, which takes about 100 minutes.
-4. **Download** its artifacts and merge them into one result file per configuration.
-5. **Commit** the results to a branch and open a PR. A bot approves it and the merge queue lands it.
+1. **No hardware of my own in CI.** The runners with N150 and P100a cards are tt-metal's. Jobs only run there if tt-metal's own workflow starts them.
+2. **No write access from the dashboard side.** Starting a workflow on tt-metal is a write. A GitHub Actions job in my repo has a token for *my* repo only.
+3. **It has to be trustworthy unattended.** A dashboard that's silently wrong is worse than none. Every number has to come from the configuration it claims to.
 
-Nothing on the tt-metal side belongs to the dashboard except one branch, `Aswinmcw/test_eltwise_perf`. That branch carries a single modified file: the matrix inside `test-dispatch.yaml`.
+## How it's wired
 
-## The dispatch, verbatim
+<figure class="flow">
+<svg viewBox="0 0 760 470" role="img" aria-label="Architecture: a dispatch box rebases and dispatches on tt-metal and starts the dashboard monitor; tt-metal jobs curl test scripts from the dashboard repo; the dashboard repo downloads artifacts and lands a PR, which Cloudflare deploys; the Worker serves the dashboard and emails alerts.">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="ahh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow hot" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+  <!-- zones -->
+  <rect class="zone" x="10" y="64" width="180" height="150" rx="10"/>
+  <text class="zone-t" x="24" y="86">Dispatch box</text>
+  <rect class="zone" x="240" y="64" width="250" height="250" rx="10"/>
+  <text class="zone-t" x="254" y="86">tenstorrent/tt-metal</text>
+  <rect class="zone" x="540" y="64" width="210" height="250" rx="10"/>
+  <text class="zone-t" x="554" y="86">dashboard repo</text>
+  <rect class="zone" x="240" y="350" width="510" height="110" rx="10"/>
+  <text class="zone-t" x="254" y="372">Cloudflare</text>
+  <!-- nodes -->
+  <rect class="node hot" x="24" y="104" width="152" height="56" rx="8"/>
+  <text class="node-t" x="36" y="127">perf-ci-dispatch.sh</text>
+  <text class="node-s" x="36" y="146">cron 01:00 · gh</text>
+  <rect class="node" x="256" y="104" width="218" height="46" rx="8"/>
+  <text class="node-t" x="270" y="124">our branch</text>
+  <text class="node-s" x="270" y="141">Aswinmcw/test_eltwise_perf</text>
+  <rect class="node" x="256" y="178" width="218" height="52" rx="8"/>
+  <text class="node-t" x="270" y="199">test-dispatch.yaml</text>
+  <text class="node-s" x="270" y="218">1 build → 8 card jobs</text>
+  <rect class="node" x="256" y="258" width="218" height="40" rx="8"/>
+  <text class="node-t" x="270" y="283">8 artifacts (JSON)</text>
+  <rect class="node" x="556" y="104" width="178" height="46" rx="8"/>
+  <text class="node-t" x="570" y="124">test scripts</text>
+  <text class="node-s" x="570" y="141">raw.githubusercontent</text>
+  <rect class="node hot" x="556" y="178" width="178" height="52" rx="8"/>
+  <text class="node-t" x="570" y="199">monitor workflow</text>
+  <text class="node-s" x="570" y="218">github.token, read</text>
+  <rect class="node" x="556" y="258" width="178" height="40" rx="8"/>
+  <text class="node-t" x="570" y="283">data PR → main</text>
+  <rect class="node" x="556" y="388" width="178" height="56" rx="8"/>
+  <text class="node-t" x="570" y="410">Worker</text>
+  <text class="node-s" x="570" y="429">SPA · JSON · /api</text>
+  <rect class="node" x="256" y="388" width="178" height="56" rx="8"/>
+  <text class="node-t" x="270" y="410">D1 + daily cron</text>
+  <text class="node-s" x="270" y="429">alert subscribers</text>
+  <!-- edges: privileged (green) -->
+  <path class="edge hot" d="M176,120 L256,120" marker-end="url(#ahh)"/>
+  <path class="edge hot" d="M176,146 C216,146 216,204 256,204" marker-end="url(#ahh)"/>
+  <path class="edge hot" d="M100,104 L100,36 L645,36 L645,178" marker-end="url(#ahh)"/>
+  <!-- edges: inside tt-metal -->
+  <path class="edge" d="M365,150 L365,178" marker-end="url(#ah)"/>
+  <path class="edge" d="M365,230 L365,258" marker-end="url(#ah)"/>
+  <!-- edges: reads -->
+  <path class="edge dash" d="M474,196 C515,196 515,127 556,127" marker-end="url(#ah)"/>
+  <path class="edge hot flowing" d="M474,278 C515,278 515,214 556,214" marker-end="url(#ahh)"/>
+  <path class="edge" d="M645,230 L645,258" marker-end="url(#ah)"/>
+  <path class="edge" d="M645,298 L645,388" marker-end="url(#ah)"/>
+  <path class="edge" d="M434,416 L556,416" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <!-- step badges -->
+  <g><circle class="num" cx="216" cy="120" r="10"/><text class="num-t" x="216" y="124">1</text></g>
+  <g><circle class="num" cx="216" cy="176" r="10"/><text class="num-t" x="216" y="180">2</text></g>
+  <g><circle class="num" cx="370" cy="36" r="10"/><text class="num-t" x="370" y="40">3</text></g>
+  <g><circle class="num" cx="515" cy="160" r="10"/><text class="num-t" x="515" y="164">4</text></g>
+  <g><circle class="num" cx="515" cy="246" r="10"/><text class="num-t" x="515" y="250">5</text></g>
+  <g><circle class="num" cx="645" cy="343" r="10"/><text class="num-t" x="645" y="347">6</text></g>
+  <g><circle class="num" cx="495" cy="416" r="10"/><text class="num-t" x="495" y="420">7</text></g>
+  <!-- legend -->
+  <text class="lbl" x="24" y="246">1  rebase + push</text>
+  <text class="lbl" x="24" y="264">2  dispatch (→ run id)</text>
+  <text class="lbl" x="24" y="282">3  start monitor(run_id)</text>
+  <text class="lbl" x="24" y="300">4  jobs curl the tests</text>
+  <text class="lbl" x="24" y="318">5  download results</text>
+  <text class="lbl" x="24" y="336">6  merge → auto-deploy</text>
+  <text class="lbl" x="24" y="354">7  serve + email alerts</text>
+</svg>
+<figcaption>Green is the privileged path. Only the box under my desk can write to tt-metal; everything else reads something public.</figcaption>
+</figure>
 
-This is the call the workflow makes. Every flag here earned its place:
+Here is what happens each night:
+
+1. **01:00 IST, on the box.** A plain crontab runs `perf-ci-dispatch.sh`. It rebases my tt-metal branch onto upstream `main` and pushes it.
+2. **Still on the box,** it dispatches tt-metal's `test-dispatch.yaml` on that branch. The dispatch API returns the new run's ID directly.
+3. **Still on the box,** it starts my repo's `daily-eltwise-perf.yml` with `mode=monitor run_id=<id>`. That's the hand-off, and the box is done.
+4. **On tt-metal's runners,** one build of tt-metal fans out to eight hardware jobs. Each job `curl`s the test file and the harness from my repo's `main`.
+5. **In my repo,** the monitor polls the run, downloads the eight result files, checks that each one measured what its name says, and commits them on a branch.
+6. **A bot opens and approves the PR,** and the merge queue lands it. Cloudflare Workers Builds deploys every push to `main`.
+7. **The Worker** serves the dashboard and the JSON. Its daily cron emails anyone whose thresholds were crossed.
+
+At 05:00 IST a read-only **freshness check** confirms that all eight combos have a result from the last 24 hours. If any don't, it opens an issue and posts to Slack. Either the data is there by breakfast, or something tells me it isn't.
+
+## The credential split, and why it's shaped this way
+
+Until November, all of this ran from a single GitHub Actions workflow in my repo, using one classic personal access token, `TT_METAL_PAT`, that could push to and dispatch on tt-metal.
+
+<figure class="flow">
+<svg viewBox="0 0 760 170" role="img" aria-label="Before: the dashboard repo held a PAT that pushed to and dispatched on tt-metal. After the PAT ban that path is cut.">
+  <defs>
+    <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+  <rect class="zone" x="10" y="20" width="260" height="130" rx="10"/>
+  <text class="zone-t" x="24" y="42">dashboard repo (public)</text>
+  <rect class="node" x="26" y="60" width="228" height="70" rx="8"/>
+  <text class="node-t" x="40" y="86">daily workflow</text>
+  <text class="node-s" x="40" y="108">secrets.TT_METAL_PAT</text>
+  <rect class="zone" x="490" y="20" width="260" height="130" rx="10"/>
+  <text class="zone-t" x="504" y="42">tenstorrent/tt-metal</text>
+  <rect class="node" x="506" y="60" width="228" height="70" rx="8"/>
+  <text class="node-t" x="520" y="86">push · dispatch · rerun</text>
+  <text class="node-s" x="520" y="108">all writes</text>
+  <path class="edge bad" d="M254,95 L506,95" marker-end="url(#ah2)"/>
+  <line class="x" x1="368" y1="80" x2="392" y2="110"/><line class="x" x1="392" y1="80" x2="368" y2="110"/>
+  <text class="lbl" x="300" y="135">PATs banned, Nov 2026</text>
+</svg>
+<figcaption>The old shape: a long-lived personal token in a public repo's secrets, with write access to someone else's repo.</figcaption>
+</figure>
+
+Then tt-metal had a security incident. As part of the cleanup, **personal access tokens were banned for tenstorrent repos**, and mine died on 8 November. The dashboard went dark for eight days.
+
+I couldn't move the schedule onto tt-metal's `main`: that's their repo, and a cron there isn't mine to add. A GitHub App or a fine-grained token would need an admin to approve it during an incident response. So I asked a narrower question: *which steps actually need to write to tt-metal?*
+
+Only three:
+- the rebase push,
+- the dispatch,
+- re-running failed jobs.
+
+Everything else (run status, the job list, the artifact zips) is a **read** of a public repo. A repo's own `github.token` is enough for those.
+
+So the pipeline is split by privilege:
+
+| Runs where | Does | Credential |
+|---|---|---|
+| a cron on a machine I control | rebase, push, dispatch, `--rerun` | my local `gh` login, which never leaves the machine |
+| GitHub Actions in the public repo | poll, download, verify, open the PR | `github.token`, read-only on tt-metal |
+| Cloudflare | serve, email | Worker secrets |
+
+The box opens no inbound connections. It pushes out and dispatches, then starts my workflow with the run ID. The public repo now holds no tenstorrent credential at all, which is how it should have been from the start.
+
+The dispatch on the box is a single API call with every input fixed in the script, because tt-metal's `command` input runs arbitrary shell on their hardware:
 
 ```bash
-# Where the test scripts are fetched from at run time (public, no auth needed).
-RAW_BASE=https://raw.githubusercontent.com/Aswincloud/ttnn-performance-dashboard/main
+TT_COMMAND='set -euo pipefail
+curl -fsSL '"$RAW_BASE"'/test_eltwise_operations.py -o /work/test_eltwise_operations.py
+curl -fsSL '"$RAW_BASE"'/perf_measurement_script.py -o /work/perf_measurement_script.py
+cd /work && python perf_measurement_script.py --in-process --shard "$SHARD/$SHARD_TOTAL"'
 
-# $SHARD / $SHARD_TOTAL are single-quoted on purpose: they must NOT expand
-# on our runner. tt-metal's matrix sets them per cell at run time.
-CMD='set -euo pipefail
-uv pip install ttperf
-curl -fsSL '"${RAW_BASE}"'/test_eltwise_operations.py -o /work/test_eltwise_operations.py
-curl -fsSL '"${RAW_BASE}"'/perf_measurement_script.py -o /work/perf_measurement_script.py
-cd /work && python perf_measurement_script.py --shard "$SHARD/$SHARD_TOTAL"'
-
-gh workflow run test-dispatch.yaml -R tenstorrent/tt-metal \
-  --ref Aswinmcw/test_eltwise_perf \
-  -f arch=wormhole_b0 \
-  -f 'runner-label=["tt-ubuntu-2204-N150-viommu-stable"]' \
-  -f tracy=true \
-  -f command="$CMD"
+jq -n --arg ref "$TT_BRANCH" --arg cmd "$TT_COMMAND" '{
+  ref: $ref,
+  return_run_details: true,            # the API answers with the new run id
+  inputs: { arch: "wormhole_b0", "runner-label": "[\"tt-ubuntu-2204-N150-viommu-stable\"]",
+            tracy: "true", command: $cmd } }' \
+| gh api -X POST repos/tenstorrent/tt-metal/actions/workflows/test-dispatch.yaml/dispatches --input -
 ```
 
-A few details that are not obvious:
+`return_run_details: true` is newer than most of this pipeline. For months I found my run by snapshotting the run list before dispatching and diffing it afterwards. That snapshot caused one of the failures below. Now the API simply returns the run's ID, and the snapshot is only a fallback.
 
-- **The test scripts are not vendored into tt-metal.** They are `curl`ed from my repo's `main` at run time, so editing a test never needs a tt-metal commit. That convenience has a price, which I'll get to.
-- **`tracy=true` is mandatory.** Every number on the dashboard comes from [`ttperf`](https://pypi.org/project/ttperf/), my wrapper around tt-metal's Tracy device profiler. Each op gets three runs, and I regex one line out of the profiler output: `DEVICE KERNEL DURATION [ns] total: …`. With `tracy=false`, tt-metal builds with `--disable-profiler`. That doesn't give worse numbers. It gives none.
-- **`arch` and `runner-label` are placeholders.** The schema requires them, but my branch's matrix decides the real hardware per cell.
-- **`description` and `commit` are deliberately left unset.** More on why in a moment.
+## The matrix: one build, eight jobs
 
-## The matrix: one build, 25 cells
-
-Building tt-metal takes about 12 minutes, and the device arch is only a runtime setting. So one build fans out to every configuration:
+Building tt-metal takes about 12 minutes, and the device arch is only a runtime setting. So one build fans out to every combination:
 
 ```yaml
 matrix:
   board: [n150, p100a]
   dtype: [bf16, fp32]
   shape: [32x32, 256x256]
-  shard: [1, 2, 3, 4, 5]
-  exclude:                       # Blackhole only runs one combo
-    - { board: p100a, dtype: fp32 }
-    - { board: p100a, shape: 256x256 }
+  shard: [1]
   include:
     - { board: n150,  label: tt-ubuntu-2204-N150-viommu-stable,  arch: wormhole_b0 }
     - { board: p100a, label: tt-ubuntu-2204-P100a-viommu-stable, arch: blackhole }
@@ -85,30 +199,27 @@ matrix:
     - { shape: 256x256, perf_shape: "1,1,256,256" }
 ```
 
-That is 20 Wormhole N150 cells plus 5 Blackhole P100a cells. Each cell is one of five shards of the 258-op list, and a cell only learns its configuration through environment variables (`PERF_DTYPE`, `PERF_SHAPE`, `ARCH_NAME`). The test file reads them, so a single test file serves every combination.
+A job learns its configuration only through environment variables (`ARCH_NAME`, `PERF_DTYPE`, `PERF_SHAPE`), so a single test file serves all eight. The runner label stays in `matrix.label` rather than being hardcoded in `runs-on`. The container setup substring-matches it to pick viommu mounts, and a missing label quietly mounts host paths that don't exist.
 
-Two things in here bit me:
+## From 100 minutes to 20
 
-- **The runner label has to stay in `matrix.label`, never hardcoded at `runs-on`.** The container setup further down checks `contains(matrix.label, 'viommu')` to pick its mounts. When I briefly hardcoded the runner while refactoring, that check would have evaluated to empty and quietly mounted host paths that don't exist on a viommu pod. YAML can't warn you about a missing value it was only ever going to substring-match.
-- **Sharding is a stride, not a block.** Each shard takes every 5th test, not a contiguous fifth. Slow ops spread out evenly, and the five shards finish within minutes of each other.
+Until November each combo needed **five shards**, and a run took about 100 minutes. The reason was how the timing was taken. Every timed iteration of every op started a fresh Python process under tt-metal's Tracy profiler, which opens the device, runs, writes a profiler log, and closes the device. Three runs × 258 ops is 774 device opens per combo.
 
-## Finding the run you just started
+The harness now has an `--in-process` mode. It runs the whole suite in **one** pytest session, opens the device once, and reads each op's kernel time straight from tt-metal's device profiler:
 
-`gh workflow run` returns no ID. It just says "dispatched." So which of the hundreds of runs on that branch is mine?
-
-My first version picked the newest run created after a timestamp. That breaks as soon as anyone, including me, dispatches by hand at the same time. The version that survived takes a snapshot of run IDs before dispatching and diffs it afterwards:
-
-```bash
-BEFORE_IDS=$(list_runs | sort -u)
-gh workflow run test-dispatch.yaml ...
-# poll until exactly one ID appears that wasn't there before
-NEW_IDS=$(comm -13 <(printf '%s\n' "$BEFORE_IDS") <(list_runs | sort -u))
-# 2+ new IDs → fail loudly. Never guess whose run is whose.
+```python
+ttnn.ReadDeviceProfiler(device)
+for programs in ttnn.get_latest_programs_perf_data().values():
+    for p in programs:
+        total += p.program_analyses_results["DEVICE KERNEL DURATION [ns]"].duration
 ```
 
-This is also why `description` stays unset. Tagging runs with a description is the obvious approach. A set difference is the correct one, because it doesn't depend on anything the run says about itself.
+A whole combo now finishes in about a minute on one runner. Sharding only multiplied setup cost, so it's down to one job per combo. That freed enough runner time to stop rationing Blackhole: P100a used to run a single combo, and now it runs all four, like N150. The run has gone from about 100 minutes to about 20, and most of what's left is queueing for runners.
 
-That snapshot also produced one of the more instructive failures here. It's further down.
+Two details worth keeping:
+
+- **A correctness flake no longer deletes a timing.** Ops like `prod` on random inputs sometimes miss their PCC threshold. The old profiler wrapper never looked at pytest's exit code, so those still got timed. The in-process mode does the same deliberately: if the op ran on the device, its timing is kept and flagged in `correctness_check_failures`. Only an op that never reached the device counts as failed.
+- **Some ops have no kernel to time.** `real`, `imag`, `complex_tensor`, `frac_bw` and `assign_bw` all pass their tests, but launch nothing on the device; they view, pack, or return the gradient as is. They had been skipped for months under a comment that said "known failing", which was wrong. They're still skipped, now with the real reason.
 
 ## Failure 1: the merge conflict that wasn't
 
@@ -116,29 +227,24 @@ For two days in August, both nightly pipelines failed. Slack said:
 
 > tt-metal branch rebase conflicted with origin/main — no dispatch made.
 
-So I went looking for a conflict. There wasn't one. A plain clone rebased all 13 commits onto `main` without a single conflict. The real error was one line up in the log:
+There was no conflict. A plain clone rebased all 13 commits cleanly. The real error was one line up in the log:
 
 ```
 fatal: remote error: upload-pack: not our ref 9a7048e5…
 ```
 
-The workflow cloned tt-metal with `--filter=blob:none` to save time. A blobless clone downloads file contents lazily, *during* the rebase, over the network. That lazy fetch was what failed. The workflow, though, labelled **any** non-zero exit from `git rebase` as a conflict. So the alert didn't just fail to help; it pointed me at the wrong problem.
-
-The fix had two halves, and the second matters more:
+The rebase ran in a `--filter=blob:none` clone. A blobless clone fetches file contents lazily, *during* the rebase, and that fetch was what failed. But the workflow labelled **any** non-zero exit from `git rebase` as a conflict. The alert didn't just fail to help; it sent me looking for the wrong problem.
 
 ```bash
-git clone --no-checkout "$AUTH" ttm   # full clone: ~1.5 GB, under a minute
 # A real conflict leaves unmerged paths. A transport failure doesn't.
-if ! OUT=$(git rebase origin/main 2>&1); then
-  if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
-    KIND=rebase-conflict    # genuinely needs a human
-  else
-    KIND=rebase-failed      # network or clone problem; a re-run clears it
-  fi
+if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+  KIND=rebase-conflict    # genuinely needs a human
+else
+  KIND=rebase-failed      # network or clone problem; a re-run clears it
 fi
 ```
 
-A full clone made the rebase purely local, so it can't fail that way any more. But the cheaper lesson was the second half: **an error label is a claim about the cause, and a wrong one costs more than no label at all.** "Conflict" sent me reading diffs for an hour. "Failed, no conflicting files" would have sent me to the re-run button.
+The box script now rebases inside a worktree of a full local clone, so it can't fail this way any more. The lesson I keep from it: **an error label is a claim about the cause, and a wrong one costs more than no label at all.**
 
 ## Failure 2: the library a refactor quietly unhooked
 
@@ -149,201 +255,105 @@ ValueError: Cannot repair wheel, because required library
             "libtracy.so.0.13.3" could not be located
 ```
 
-My first theory was "upstream main is broken." I said so with some confidence. I was wrong, and a quick look proved it: other people's `test-dispatch` runs on `main` were green that same night.
-
-The difference was one flag, and the clue was a file size. In their builds, `libtracy.so` was **12K**. In mine it was **491K**. With `tracy=false`, tt-metal builds a stub that nothing links against. With `tracy=true`, the real library is an actual dependency of the wheel, so `auditwheel` has to find it while packaging. It used to find it through a build-directory entry in `INSTALL_RPATH`. An upstream cleanup, sensibly, removed that entry. As far as I could tell, we were the only consumer building with tracy on. So nobody else noticed, and there was nothing upstream to find.
-
-The fix was already in tt-metal's own repo. `build-artifact.yaml` has two ways to build a wheel. The second one passes the library path to `auditwheel` explicitly:
-
-```bash
-LD_LIBRARY_PATH=/work/build/lib auditwheel repair ...
-```
-
-That's exactly why tt-metal's own profiler pipeline pairs `tracy: true` with it. So the fix on my branch was one line:
+My first theory was that upstream `main` was broken. It wasn't: other people's runs were green that same night. The clue was a file size. In their builds `libtracy.so` was **12K**, and in mine it was **491K**. With `tracy=false`, tt-metal builds a stub that nothing links against. With `tracy=true`, which I need because every number comes from the device profiler, the real library is a dependency that `auditwheel` must find. An upstream cleanup had removed the build-dir `RPATH` it used to find it by. The fix was already in tt-metal, in the other wheel path, which tt-metal's own profiler pipeline uses:
 
 ```diff
 -      build-wheel: true
 +      build-inplace-wheel: true
 ```
 
-It was also faster, since that path skips a second full compile. What I took away: when "it's broken upstream" turns out to be broken only for *you*, diff your setup against someone it works for. Theirs was green; the 12K-versus-491K file size was the whole answer.
+When "it's broken upstream" turns out to be broken only for *you*, diff your setup against someone it works for.
 
-## Failure 3: one flaky cell throws away the whole day
+## Failure 3: one flaky job throws away the whole day
 
-The tt-metal run is all-or-nothing. If any one cell fails, the whole run reports `failure`. One night in August, 19 of 20 cells passed and the day was thrown away anyway, because a single shard hit a hardware hiccup. I clicked "Re-run failed jobs" by hand, it passed, and I decided I wasn't clicking that button every week.
+The tt-metal run is all-or-nothing. One night, 19 of 20 jobs passed and the whole day was discarded. Re-running only the failed jobs is safe, because the passing jobs' artifacts survive into the next attempt. It's worth doing only for a *partial* failure: if nothing passed, the build broke, and a retry just burns the build time again.
 
-The poll step now does it once, automatically. But only for a *partial* failure:
-
-```bash
-if [ "$RETRIES_LEFT" -gt 0 ] && [ "$OK_CELLS" -gt 0 ] && [ "$BAD_CELLS" -gt 0 ]; then
-  gh run rerun "$RUN_ID" -R tenstorrent/tt-metal --failed
-  # wait for run_attempt to tick over BEFORE polling again
-fi
-```
-
-The condition is the important part. If **zero** cells passed, the build itself broke, like in Failure 2. Retrying a broken build just burns another 12 minutes. A retry only makes sense when the failure looks random.
-
-I checked first that a partial re-run keeps the artifacts from the cells that passed. It does: all 19 survived into attempt two. There's also a subtle trap after the re-run is accepted. For a few seconds, the API still reports the old `completed/failure`. A poller that resumes straight away reads that stale status, decides the retry failed, and gives up. So it waits for `run_attempt` to increment first.
+This is now `perf-ci-dispatch.sh --rerun <id>` on the box. A rerun is a write to tt-metal, and the public repo deliberately can't do writes any more. One trap stays the same. For a few seconds after a rerun is accepted, the API still reports the old `completed/failure`. Wait for `run_attempt` to tick over before believing anything.
 
 ## Failure 4: the recovery job that ingested the past
 
-This one is the reason the safety-net cron exists, and also the reason it once failed.
+In July, GitHub cancelled my workflow partway through polling. The tt-metal run succeeded, but nothing collected it. My alert steps used `if: failure()`, and a cancellation is `cancelled()`, so the steps were *skipped*. The day's data vanished silently. That gave me alerts on `failure() || cancelled()`, a manual `mode=recover`, and a 05:00 safety-net that automatically ingested the newest successful run.
 
-**Why it exists:** in July, GitHub cancelled my workflow's runner partway through polling. The tt-metal run kept going and succeeded, but nothing was waiting to collect it. Worse, my alert steps used `if: failure()`. A cancellation is `cancelled()`, not `failure()`, so those steps were *skipped*. The day's data vanished without a sound. Three fixes followed: alerts now fire on `failure() || cancelled()`; there's a manual `mode=recover` to ingest an already-finished run; and a 05:00 IST cron checks whether today's data actually landed and, if not, ingests the newest successful tt-metal run.
-
-**Why it failed:** this month the main run died with `dispatch-ambiguous`, listing **37 "new" runs**: every run that branch had ever had. The listing *before* dispatch had failed, and a `|| true` meant to prevent crashes turned that failure into an empty list. Diffing against an empty list makes everything look new.
-
-Then the safety-net woke up to recover. It asked for the newest successful run and took the first item in the list, `.[0]`. It got a run from **three weeks earlier**, older than the Blackhole combo itself. Downloading the Blackhole artifact from that old run matched nothing, `gh` exited 1, and the step died before any of my own error handling ran. The Slack alert came with an empty reason.
-
-So two separate mistakes landed on the same night:
+Then the safety-net ingested a run from **three weeks earlier**. That night, the run listing taken before the dispatch had failed. A `|| true` turned the failure into an empty list, so every run looked new and dispatch aborted. The safety-net then took `.[0]` of the run list, assuming it was the newest. It wasn't.
 
 ```bash
-# Before: trust the API's list order
--q '.[0].databaseId'
-# After: sort by creation time explicitly
+-q '.[0].databaseId'                                          # before: trust API order
 --json databaseId,createdAt -q 'sort_by(.createdAt) | reverse | .[0].databaseId'
 ```
 
-Then two more guards. The safety-net now refuses any run older than 30 hours, because its whole job is to rescue *tonight*. And the snapshot before dispatch now retries, then refuses to dispatch at all if it can't list the existing runs. For a step whose only job is telling runs apart, an empty list isn't a safe default. It's the worst possible answer.
+That safety-net is gone now. With a precise run ID handed over from the box, nothing ever has to guess which run is tonight's. The 05:00 job became a **read-only freshness check**. It ingests nothing; it only asks whether all eight combos have a result from the last 24 hours. Automatic recovery that can be wrong turned out to be worth less than an alert that can't be.
 
 ## The guard I'm most glad I built before I needed it
 
-All of these failures were loud. The scary one was a failure that would have stayed silent.
-
-The dashboard decides where a result goes, say `fp32/256x256`, purely from the artifact's **name**. But what actually got measured depends on the environment variables reaching a test file that is curled from `main` at run time. Those two halves change independently. If the matrix ever sets `PERF_DTYPE=float32` while the curled file doesn't read it yet, bfloat16 numbers get filed under float32. Nothing in the data would show it.
-
-So every result now records what it actually measured:
+The dashboard decides where a result goes, say `p100a/fp32/256x256`, from the artifact's **name**. But what was actually measured depends on environment variables reaching a test file `curl`ed from `main` at run time. Those two halves change independently. So every result records what it really measured:
 
 ```json
-"perf_dtype": "float32",
-"perf_shape": "1,1,256,256",
-"perf_arch": "blackhole"
+"perf_dtype": "float32", "perf_shape": "1,1,256,256", "perf_arch": "blackhole"
 ```
 
-The shard merge refuses to combine shards that disagree on any of those fields. And just before committing, the pipeline compares them with the directory the file is about to go into:
+The merge step refuses to combine shards that disagree. Just before committing, the pipeline compares those fields with the directory the file is about to go into, and if they don't match it refuses the whole day (`combo-provenance-mismatch`). I've never seen it fire. That's the point: a loud failure costs me one morning, but a quiet mislabel would poison every comparison against that day.
 
-```bash
-if [ "$NORM_DT" != "$DT" ] || [ "$GOT_SHAPE" != "$WANT_SHAPE" ]; then
-  echo "FAIL_KIND=combo-provenance-mismatch"   # refuse the whole day
-  exit 1
-fi
-```
-
-I've never seen it fire. That's fine, because that's the point. Its value is that a mislabelled number is now impossible rather than merely unlikely. A loud failure costs me one morning. A quiet mislabel would poison every future comparison against that day.
-
-The same reasoning decided the rollout order when I added the float32 axis. The dashboard change went in *first*, and I confirmed `raw.githubusercontent.com` was actually serving the new test file before I touched the matrix. The other order would have measured bfloat16 twice and stored half of it under the wrong name.
-
-## Credentials, briefly
-
-It runs on four kinds of credentials, each scoped to one job:
-
-- **`TT_METAL_PAT`**, a classic personal access token with `repo` and `workflow` scopes. It's used for everything that touches tt-metal, because the dashboard repo's own `GITHUB_TOKEN` can't reach another org.
-- **A GitHub App** that authors the results PR, so data commits show up as a bot rather than as me.
-- **`WRITE_ACCESS_PAT`**, a separate account allowed to bypass code-owner review. It approves the bot's PR. The auto-approve workflow deliberately ignores bot authors, so something has to do this explicitly.
-- **`SLACK_BOT_TOKEN`**, which posts failures with a human-readable reason for each failure kind. As Failures 1 and 4 showed, getting that reason *right* is most of the value.
-
-Checkout runs with `persist-credentials: false`. Otherwise the read-only `GITHUB_TOKEN` is left in git config, overrides the App token on push, and the PR push fails with a 403.
+The same rule decides rollout order. If a change needs new harness behaviour, merge the dashboard first, since the test file is fetched from there. If it only adds matrix jobs, push tt-metal first. Either way, a mismatch fails loudly instead of landing wrong data.
 
 ## Run it yourself
 
-Everything above is automated in my repo. You don't need my repo to use it, though. If you have **push access to `tenstorrent/tt-metal`**, you can start a sweep and get the numbers yourself. Push access is what `gh workflow run` needs there; the dashboard side is all public.
-
-**Just want last night's numbers?** You don't need to run anything. The pipeline publishes the newest result for each combo, readable without credentials:
+**Just want last night's numbers?** No credentials needed:
 
 ```
 https://raw.githubusercontent.com/Aswincloud/ttnn-performance-dashboard/main/data/latest/latest_<combo>.json
 ```
 
-Here `<combo>` is one of `bf16_32x32`, `bf16_256x256`, `fp32_32x32`, `fp32_256x256` (all N150) or `p100a_bf16_32x32` (Blackhole). Run a sweep yourself only when you need to measure a specific tt-metal branch or commit, or need numbers newer than last night's.
+`<combo>` is `[p100a_]<bf16|fp32>_<32x32|256x256>`: `bf16_32x32`, `fp32_256x256`, `p100a_bf16_32x32`, and so on. With no board prefix, it's N150.
 
-**Run on your own branch, never on mine.** The script copies my branch, `Aswinmcw/test_eltwise_perf`, to one named `<your-github-login>/eltwise-perf`, and runs there. Please don't dispatch on my branch or push to it, and never touch `main`. This isn't only etiquette. My nightly job force-pushes my branch, so anything you push there disappears overnight. And my recovery job treats the newest successful run on my branch as that day's data. A run of yours there, especially one measuring a custom commit, could be published on the dashboard as my nightly numbers. The script refuses to run on my branch or `main`, and it creates your branch server-side, so there's no multi-gigabyte clone and nothing is pushed to any existing branch.
+**Have a card?** Run it locally from a tt-metal checkout:
 
-**What you need**
+```bash
+cd ~/tt-metal && source python_env/bin/activate
+curl -fsSLO https://raw.githubusercontent.com/Aswincloud/ttnn-performance-dashboard/main/test_eltwise_operations.py
+curl -fsSLO https://raw.githubusercontent.com/Aswincloud/ttnn-performance-dashboard/main/perf_measurement_script.py
+PERF_DTYPE=bf16 PERF_SHAPE=1,1,32,32 python perf_measurement_script.py --in-process
+```
 
-- The [`gh` CLI](https://cli.github.com/), logged in (`gh auth login`) as an account that can push to `tenstorrent/tt-metal`. A token needs the `repo` and `workflow` scopes.
-- `python3`. The merge step uses only the standard library.
-- About 100 minutes, which is how long a full run takes.
+Run it from the tt-metal root, whose `pytest.ini` the harness relies on to collect tests.
 
-**The whole thing as one script.** Save it as `run-perf.sh` and run `bash run-perf.sh`. Some options:
-
-- `TT_COMMIT=<branch-or-sha> bash run-perf.sh` measures a different tt-metal branch or commit instead of the tip of your branch.
-- `REFRESH=1 bash run-perf.sh` resets your branch to my current one first. My branch is rebased onto upstream `main` every night, so this picks up the latest build tooling. It overwrites your branch, so skip it if you've committed your own changes there.
-- `TT_BRANCH=<name> bash run-perf.sh` uses a branch name of your choosing.
+**Have push access to tt-metal and want CI hardware?** Run on **your own** branch, never on mine. My nightly job force-pushes my branch, so anything you push there disappears overnight. Never touch `main` either. The script below copies my branch to `<your-login>/eltwise-perf` server-side (no clone) and refuses to run on mine or `main`. It uses your local `gh` login, the same way my box does.
 
 ```bash
 #!/usr/bin/env bash
 # Trigger the TTNN eltwise perf sweep on tt-metal and turn it into CSVs.
-# Needs only: gh CLI authenticated with push access to tenstorrent/tt-metal, python3.
+# Needs: gh CLI logged in with push access to tenstorrent/tt-metal, jq, python3.
 set -euo pipefail
 
 TT_REPO=tenstorrent/tt-metal
-# My branch: copy it, never run on it or push to it. My nightly job
-# force-pushes it, and my recovery job ingests the newest successful run on
-# it as the day's data, so your run there could be published as mine.
-SOURCE_BRANCH=Aswinmcw/test_eltwise_perf
-# Your own branch, created from mine on first use.
+SOURCE_BRANCH=Aswinmcw/test_eltwise_perf           # copy it; never run on it
 TT_BRANCH="${TT_BRANCH:-$(gh api user -q .login)/eltwise-perf}"
-# The test scripts live in the dashboard repo and are fetched at run time.
 RAW_BASE=https://raw.githubusercontent.com/Aswincloud/ttnn-performance-dashboard/main
-# Optional: measure a different tt-metal branch or SHA. Empty = the branch tip.
-TT_COMMIT="${TT_COMMIT:-}"
+TT_COMMIT="${TT_COMMIT:-}"                          # optional branch/SHA to measure
 
-# --- 0. Work on your own branch, never on mine or main. ---
-case "$TT_BRANCH" in
-  "$SOURCE_BRANCH"|main) echo "refusing to run on $TT_BRANCH; use your own branch" >&2; exit 1 ;;
-esac
+case "$TT_BRANCH" in "$SOURCE_BRANCH"|main) echo "use your own branch" >&2; exit 1 ;; esac
 SRC_SHA=$(gh api "repos/$TT_REPO/git/ref/heads/$SOURCE_BRANCH" -q .object.sha)
 if ! gh api "repos/$TT_REPO/git/ref/heads/$TT_BRANCH" >/dev/null 2>&1; then
-  # Creates the branch server-side: no multi-GB clone, and nothing is
-  # pushed to any existing branch.
   gh api "repos/$TT_REPO/git/refs" -f ref="refs/heads/$TT_BRANCH" -f sha="$SRC_SHA" >/dev/null
-  echo "created $TT_BRANCH from $SOURCE_BRANCH @ ${SRC_SHA:0:10}"
 elif [ "${REFRESH:-0}" = 1 ]; then
-  # Reset YOUR branch to my current tip (mine is rebased on upstream main nightly).
   gh api -X PATCH "repos/$TT_REPO/git/refs/heads/$TT_BRANCH" -f sha="$SRC_SHA" -F force=true >/dev/null
-  echo "refreshed $TT_BRANCH to $SOURCE_BRANCH @ ${SRC_SHA:0:10}"
-else
-  echo "using existing $TT_BRANCH (REFRESH=1 resets it to $SOURCE_BRANCH)"
 fi
 
-# --- 1. Note existing runs, so we can tell which one is ours afterwards. ---
-before=$(gh run list -R "$TT_REPO" -w test-dispatch.yaml -e workflow_dispatch \
-           -b "$TT_BRANCH" -L 100 --json databaseId -q '.[].databaseId' | sort -u)
-
-# --- 2. Dispatch. Single quotes keep $SHARD/$SHARD_TOTAL literal: tt-metal's
-#        matrix fills them in per cell. arch and runner-label are required by
-#        the form but ignored; the branch's matrix picks the real hardware. ---
 CMD='set -euo pipefail
-uv pip install ttperf
 curl -fsSL '"$RAW_BASE"'/test_eltwise_operations.py -o /work/test_eltwise_operations.py
 curl -fsSL '"$RAW_BASE"'/perf_measurement_script.py -o /work/perf_measurement_script.py
-cd /work && python perf_measurement_script.py --shard "$SHARD/$SHARD_TOTAL"'
+cd /work && python perf_measurement_script.py --in-process --shard "$SHARD/$SHARD_TOTAL"'
 
-gh workflow run test-dispatch.yaml -R "$TT_REPO" --ref "$TT_BRANCH" \
-  -f arch=wormhole_b0 \
-  -f 'runner-label=["tt-ubuntu-2204-N150-viommu-stable"]' \
-  -f tracy=true \
-  -f command="$CMD" \
-  ${TT_COMMIT:+-f commit="$TT_COMMIT"}
-
-# --- 3. Find the run we just started (the one ID that wasn't there before). ---
-RUN_ID=""
-for _ in $(seq 1 30); do
-  sleep 10
-  now=$(gh run list -R "$TT_REPO" -w test-dispatch.yaml -e workflow_dispatch \
-          -b "$TT_BRANCH" -L 100 --json databaseId -q '.[].databaseId' | sort -u)
-  new=$(comm -13 <(echo "$before") <(echo "$now") | grep -v '^$' || true)
-  [ "$(echo "$new" | grep -c .)" -eq 1 ] && { RUN_ID=$new; break; }
-done
-[ -n "$RUN_ID" ] || { echo "could not identify the new run" >&2; exit 1; }
+RUN_ID=$(jq -n --arg ref "$TT_BRANCH" --arg cmd "$CMD" --arg commit "$TT_COMMIT" '{
+    ref: $ref, return_run_details: true,
+    inputs: ({ arch: "wormhole_b0", "runner-label": "[\"tt-ubuntu-2204-N150-viommu-stable\"]",
+               tracy: "true", command: $cmd } + (if $commit != "" then {commit: $commit} else {} end)) }' \
+  | gh api -X POST "repos/$TT_REPO/actions/workflows/test-dispatch.yaml/dispatches" --input - \
+  | jq -r .workflow_run_id)
 echo "run: https://github.com/$TT_REPO/actions/runs/$RUN_ID"
 
-# --- 4. Wait. A full run takes about 100 minutes. ---
-gh run watch "$RUN_ID" -R "$TT_REPO" --interval 120 --exit-status || {
-  echo "run did not succeed; re-run only the failed cells with:" >&2
-  echo "  gh run rerun $RUN_ID -R $TT_REPO --failed" >&2; exit 1; }
+gh run watch "$RUN_ID" -R "$TT_REPO" --interval 60 --exit-status || {
+  echo "re-run only the failed jobs with: gh run rerun $RUN_ID -R $TT_REPO --failed" >&2; exit 1; }
 
-# --- 5. Download the 25 shard artifacts and merge them into one CSV per combo. ---
 OUT="perf-$RUN_ID"; mkdir -p "$OUT/tools"
 gh run download "$RUN_ID" -R "$TT_REPO" -p 'eltwise-perf-results-*' -D "$OUT/artifacts"
 curl -fsSL "$RAW_BASE/perf_measurement_script.py" -o "$OUT/tools/perf_measurement_script.py"
@@ -351,23 +361,27 @@ curl -fsSL "$RAW_BASE/combine_to_csv.py"          -o "$OUT/tools/combine_to_csv.
 PYTHONPATH="$OUT/tools" python3 "$OUT/tools/combine_to_csv.py" "$OUT/artifacts" "$OUT"
 ```
 
-When it finishes you have one CSV per combo in `perf-<run-id>/`, for example `bf16_32x32.csv` and `p100a_bf16_32x32.csv`. Each row is one op, with `average_duration_ns`, `std_deviation_ns`, `min_duration_ns`, `max_duration_ns` and the number of successful runs out of 3. The merged JSON is next to each CSV. Its `metadata` block records `perf_dtype`, `perf_shape`, `perf_arch` and `git_commit_id`, so you can confirm the run measured what you asked for. `git_commit_id` is the tt-metal commit that was actually built. When you pass `TT_COMMIT`, check it there: the run page always shows the branch tip instead.
+You end up with one CSV and one merged JSON per combo in `perf-<run-id>/`. The JSON's `metadata.git_commit_id` is the tt-metal commit that was actually built, so check it there when you pass `TT_COMMIT`: the run page always shows the branch tip instead.
 
-**A few things that trip people up**
+A few things that trip people up:
 
-- **Use the `gh` command above, not the GitHub web form.** The form's `command` box is a single line. A multi-line paste gets its newlines turned into spaces, so `set -euo pipefail` swallows every command after it and the test scripts never download. If you must use the form, join the commands with `; ` instead.
-- **Keep `"$SHARD/$SHARD_TOTAL"` literal.** It's filled in per cell by tt-metal's matrix. Don't replace it with numbers.
-- **The artifacts are raw shards.** There are 25 of them, named `eltwise-perf-results-<combo>-shard-<1..5>`. Each one only holds a fifth of the ops, so always merge before you read anything.
-- **One flaky cell fails the whole run.** If 24 cells passed, the script prints a `gh run rerun --failed` command. That re-runs only the failed cell and keeps the artifacts already produced. Run the download step again after it finishes.
-- **Artifacts expire after about 90 days.** After that the shards are gone, and only the merged results in the dashboard repo remain.
+- **Use the API call, not the web form.** The form's `command` box is a single line. Pasting multiple lines turns the newlines into spaces, so `set -euo pipefail` swallows every command after it.
+- **Keep `"$SHARD/$SHARD_TOTAL"` literal.** tt-metal's matrix fills it in for each job.
+- **Artifacts expire after about 90 days.** After that, only the merged results in the dashboard repo remain.
+
+## What's still rough
+
+- **The alert emails watch the wrong index.** The Cloudflare Worker's daily cron still reads the original `data/index.json`, whose newest entry is from July. Every result since then lands under `data/workflow/`. So since July the alert job has seen the same newest measurement every morning and correctly decided there was nothing new to send. It's the same class of bug as the others in this post: a component that's quietly sure of something that stopped being true. Pointing it at the per-combo index is next.
+- **Day-over-day colouring is noisy.** Kernel times jitter by a few percent, and the table colours cells from about 3%. A rolling median would separate real regressions from weather.
 
 ## Takeaway
 
-The pipeline was an afternoon's work. Dispatch a workflow, wait, download, commit: none of it is clever. It has run about 200 times, with 185 successes. The interesting part is the 15 failures, and how many of them initially told me something false:
+The pipeline itself was an afternoon's work. The interesting parts were the failures, and how many of them initially told me something false:
 
-- a **conflict** that was a network fetch,
+- a **conflict** that was really a failed network fetch,
 - an **upstream break** that only affected my build flag,
-- a run **cancellation** the alerts were built to skip,
-- a **"newest" run** that was three weeks old.
+- a **cancellation** that the alerts had been written to skip,
+- a **"newest" run** that was three weeks old,
+- a test list that said **"known failing"** about tests that never failed.
 
-Each time, the fix that mattered wasn't the patch. It was making the system's account of itself honest: labels that name the real cause, recovery that refuses stale input, and data that records what it actually measured. The numbers on the dashboard are only worth anything if the pipeline behind them can't quietly be wrong. The [code is public](https://github.com/Aswincloud/ttnn-performance-dashboard) if you want the unedited version of every command above.
+The security change pushed it the same way. Splitting by privilege didn't just satisfy a policy. It made each piece do one honest thing: the box writes, the public repo reads and verifies, and Cloudflare serves. The numbers on the dashboard are only worth anything if the pipeline behind them can't quietly be wrong. The [code is public](https://github.com/Aswincloud/ttnn-performance-dashboard) if you want every command above, unedited.
