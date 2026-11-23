@@ -1039,3 +1039,34 @@ main {
     box-shadow: none;
   }
 }
+
+/* ---- Inline architecture diagrams (theme-aware SVG) ----------------------- */
+.prose figure.flow {
+  margin: var(--space-l) 0;
+  padding: var(--space-s);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow-x: auto;
+}
+.flow svg { display: block; width: 100%; min-width: 34rem; height: auto; }
+.flow .zone   { fill: var(--surface-2); stroke: var(--border-strong); stroke-width: 1; }
+.flow .zone-t { fill: var(--muted); font: 600 11px var(--font-sans); letter-spacing: .06em; text-transform: uppercase; }
+.flow .node   { fill: var(--bg-elev); stroke: var(--border-strong); stroke-width: 1.2; }
+.flow .node.hot { stroke: var(--accent); stroke-width: 1.6; }
+.flow .node-t { fill: var(--fg-strong); font: 600 13px var(--font-sans); }
+.flow .node-s { fill: var(--muted); font: 400 11px var(--font-mono); }
+.flow .edge   { fill: none; stroke: var(--faint); stroke-width: 1.4; }
+.flow .edge.hot { stroke: var(--accent); stroke-width: 1.8; }
+.flow .edge.dash { stroke-dasharray: 5 4; }
+.flow .edge.bad { stroke: #e5484d; stroke-dasharray: 6 4; }
+.flow .lbl    { fill: var(--fg); font: 500 11px var(--font-sans); }
+.flow .num    { fill: var(--accent); }
+.flow .num-t  { fill: var(--accent-contrast); font: 700 11px var(--font-sans); text-anchor: middle; }
+.flow .arrow  { fill: var(--faint); }
+.flow .arrow.hot { fill: var(--accent); }
+.flow .x      { stroke: #e5484d; stroke-width: 3; stroke-linecap: round; }
+@media (prefers-reduced-motion: no-preference) {
+  .flow .edge.hot.flowing { stroke-dasharray: 6 6; animation: flow-dash 1.2s linear infinite; }
+  @keyframes flow-dash { to { stroke-dashoffset: -12; } }
+}
